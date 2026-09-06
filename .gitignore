@@ -1,0 +1,25 @@
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# Python Bytecode & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Coverage & Test reports
+.coverage
+htmlcov/
+
+# Output Artifacts & Datasets
+*.png
+*.jpg
+*.jpeg
+data/synthetic/*
+!data/synthetic/.gitkeep
+
+# IDE configuration
+.vscode/
+.idea/

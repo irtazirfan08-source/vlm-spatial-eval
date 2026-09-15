@@ -3,7 +3,7 @@ from PIL import Image
 import torch
 import torch.nn.functional as F
 from transformers import AutoModel, AutoProcessor
-from src.perturbations import PhotometricDegradationEngine
+from .perturbations import PhotometricDegradationEngine
 
 
 class VLMSpatialEvaluator:

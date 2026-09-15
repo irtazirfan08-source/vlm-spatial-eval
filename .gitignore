@@ -23,3 +23,4 @@ data/synthetic/*
 # IDE configuration
 .vscode/
 .idea/
+data/fine_tune/

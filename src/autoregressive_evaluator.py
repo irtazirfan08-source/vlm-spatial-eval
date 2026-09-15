@@ -12,7 +12,7 @@ except ImportError:
     except ImportError:
         from transformers import AutoModel as AutoModelForVLM
 
-from src.perturbations import PhotometricDegradationEngine
+from .perturbations import PhotometricDegradationEngine
 
 
 class AutoregressiveSpatialEvaluator:

@@ -9,7 +9,7 @@ from PIL import Image
 # Add project root to sys.path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-from src.spatial_generator import SpatialDatasetGenerator
+from .spatial_generator import SpatialDatasetGenerator
 
 
 OPPOSITE_RELATIONS = {

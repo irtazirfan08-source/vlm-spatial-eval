@@ -5,9 +5,9 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 import matplotlib.pyplot as plt
-from src.evaluator import VLMSpatialEvaluator
-from src.autoregressive_evaluator import AutoregressiveSpatialEvaluator
-from src.spatial_generator import SpatialDatasetGenerator
+from .evaluator import VLMSpatialEvaluator
+from .autoregressive_evaluator import AutoregressiveSpatialEvaluator
+from .spatial_generator import SpatialDatasetGenerator
 
 
 def run_benchmark():

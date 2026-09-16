@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vlm-spatial-eval"
+version = "0.1.0"
+description = "Spatial Reasoning & Robustness Benchmark for Vision-Language Models"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "Irtaz Irfan" }
+]
+dependencies = [
+    "torch>=2.2.0",
+    "torchvision",
+    "transformers>=4.40.0",
+    "accelerate>=0.28.0",
+    "scikit-learn>=1.4.0",
+    "albumentations>=1.4.0",
+    "opencv-python-headless>=4.9.0.80",
+    "pillow>=10.2.0",
+    "numpy>=1.26.0",
+    "matplotlib>=3.8.0",
+    "pydantic>=2.6.0",
+    "pyyaml>=6.0.1",
+    "sentencepiece",
+    "protobuf",
+    "peft",
+    "datasets",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.1.0",
+]
+
+[tool.setuptools]
+packages = ["vlm_spatial_eval"]
+
+[tool.setuptools.package-dir]
+vlm_spatial_eval = "src"

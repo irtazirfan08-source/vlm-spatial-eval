@@ -24,3 +24,5 @@ data/synthetic/*
 .vscode/
 .idea/
 data/fine_tune/
+
+*.egg-info/

@@ -26,3 +26,6 @@ data/synthetic/*
 data/fine_tune/
 
 *.egg-info/
+
+dist/
+build/

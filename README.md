@@ -13,4 +13,5 @@ To address the spatial reasoning failure identified during benchmarking, we impl
 | **SmolVLM-256M (Baseline)** | 66.7% | 0.0% | Normal |
 | **SmolVLM-256M + Spatial-LoRA** | **75.0%** | **0.29%** | **Preserved ("White")** |
 
+
 **Intervention Delta:** **+8.3% absolute accuracy gain** on balanced spatial discrimination without language degradation.

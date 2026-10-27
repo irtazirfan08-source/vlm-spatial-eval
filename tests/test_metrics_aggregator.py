@@ -1,6 +1,6 @@
 import json
-import pytest
 from pathlib import Path
+import pytest
 from src.metrics_aggregator import SpatialMetricsAggregator
 
 
@@ -70,3 +70,36 @@ def test_export_json(tmp_path: Path):
     assert data["summary"]["total_samples"] == 2
     assert data["summary"]["clean_accuracy"] == 1.0
     assert data["summary"]["perturbed_accuracy"] == 0.0
+
+
+def test_to_markdown_table_alias():
+    aggregator = SpatialMetricsAggregator()
+    aggregator.add_evaluation("s1", "above", "above", "above", is_perturbed=False)
+    assert aggregator.to_markdown_table() == aggregator.generate_markdown_report()
+
+
+def test_latex_table_export(tmp_path: Path):
+    aggregator = SpatialMetricsAggregator()
+    aggregator.add_evaluation("s1", "left_of", "left_of", "left_of", is_perturbed=False)
+    aggregator.add_evaluation(
+        "s2",
+        "left_of",
+        "right_of",
+        "left_of",
+        is_perturbed=True,
+        perturbation_type="gaussian_blur",
+    )
+
+    latex_str = aggregator.to_latex_table(caption="Test Caption", label="tab:test")
+    assert r"\begin{table}" in latex_str
+    assert r"\toprule" in latex_str
+    assert r"\bottomrule" in latex_str
+    assert r"\caption{Test Caption}" in latex_str
+    assert r"\label{tab:test}" in latex_str
+    assert r"\texttt{left\_of}" in latex_str
+    assert r"\textbf{Overall}" in latex_str
+
+    export_file = tmp_path / "reports" / "benchmark.tex"
+    aggregator.export_latex(str(export_file), caption="Test Caption", label="tab:test")
+    assert export_file.exists()
+    assert export_file.read_text(encoding="utf-8") == latex_str

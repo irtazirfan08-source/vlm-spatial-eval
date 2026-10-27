@@ -1,3 +1,5 @@
+"""Aggregates spatial reasoning evaluation outputs and exports formatted benchmark reports."""
+
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,7 +19,6 @@ class EvaluationResult:
 
 class SpatialMetricsAggregator:
     """Aggregates spatial reasoning evaluation outputs and computes
-
     robustness degradation metrics across relation categories and visual perturbations.
     """
 
@@ -128,6 +129,68 @@ class SpatialMetricsAggregator:
             )
 
         return "\n".join(lines)
+
+    def to_markdown_table(self) -> str:
+        """Alias for generate_markdown_report for standardized export APIs."""
+        return self.generate_markdown_report()
+
+    def to_latex_table(
+        self,
+        caption: str = "Spatial Reasoning Robustness Breakdown under Visual Perturbations",
+        label: str = "tab:spatial_robustness",
+    ) -> str:
+        """Generates a publication-ready LaTeX table using booktabs style."""
+        breakdown = self.compute_per_relation_breakdown()
+        overall_clean = self.get_clean_accuracy()
+        overall_pert = self.get_perturbed_accuracy()
+        overall_drop = self.compute_robustness_drop()
+
+        clean_total = sum(1 for r in self.results if not r.is_perturbed)
+        pert_total = sum(1 for r in self.results if r.is_perturbed)
+
+        lines = [
+            r"\begin{table}[htbp]",
+            r"\centering",
+            f"\\caption{{{caption}}}",
+            f"\\label{{{label}}}",
+            r"\begin{tabular}{lccccc}",
+            r"\toprule",
+            r"Relation & Clean $N$ & Clean Acc (\%) & Perturbed $N$ & Perturbed Acc (\%) & Rel. Drop (\%) \\",
+            r"\midrule",
+        ]
+
+        for rel, stats in breakdown.items():
+            clean_acc_pct = stats["clean_accuracy"] * 100
+            pert_acc_pct = stats["perturbed_accuracy"] * 100
+            drop_pct = stats["relative_drop"] * 100
+            escaped_rel = rel.replace("_", r"\_")
+            lines.append(
+                f"\\texttt{{{escaped_rel}}} & {stats['clean_samples']} & {clean_acc_pct:.1f} & "
+                f"{stats['perturbed_samples']} & {pert_acc_pct:.1f} & {drop_pct:.1f} \\\\"
+            )
+
+        lines.extend([
+            r"\midrule",
+            f"\\textbf{{Overall}} & {clean_total} & {overall_clean * 100:.1f} & "
+            f"{pert_total} & {overall_pert * 100:.1f} & {overall_drop * 100:.1f} \\\\",
+            r"\bottomrule",
+            r"\end{tabular}",
+            r"\end{table}",
+        ])
+
+        return "\n".join(lines)
+
+    def export_latex(
+        self,
+        output_path: str,
+        caption: str = "Spatial Reasoning Robustness Breakdown under Visual Perturbations",
+        label: str = "tab:spatial_robustness",
+    ) -> None:
+        """Exports the formatted LaTeX table to disk."""
+        path = Path(output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(self.to_latex_table(caption=caption, label=label))
 
     def export_json(self, output_path: str) -> None:
         data = {

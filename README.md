@@ -1,17 +1,39 @@
-## Post-Training Intervention: Parameter-Efficient Fine-Tuning (PEFT / LoRA)
+# vlm-spatial-eval
 
-To address the spatial reasoning failure identified during benchmarking, we implemented a supervised instruction alignment pipeline targeting SmolVLM-256M:
+[![CI Pipeline](https://github.com/irtazirfan08-source/vlm-spatial-eval/actions/workflows/ci.yml/badge.svg)](https://github.com/irtazirfan08-source/vlm-spatial-eval/actions/workflows/ci.yml)
+![Python Version](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)
+![PyTest](https://img.shields.io/badge/tests-30%20passed-brightgreen)
+![License](https://img.shields.io/badge/license-MIT-green)
 
-1. **Synthetic Conversational Dataset:** Generated balanced relational query pairs with hard negative counterfactuals across canonical spatial prepositions.
-2. **Adapter Architecture:** Injected low-rank adapters ($r=8, \alpha=16$) into the language decoder's query and value projections (`q_proj`, `v_proj`), representing **0.29% of total parameters** (755,712 trainable weights).
-3. **Target Loss Masking:** Formatted conversations using SmolVLM chat templates with prompt tokens masked to `-100` to focus cross-entropy loss exclusively on target outputs.
+A modular diagnostic benchmarking suite designed to probe, quantify, and stress-test spatial reasoning, relative directional comprehension, and topological predicates in Vision-Language Models (VLMs) across progressive photometric degradation tiers.
 
-### Results on Held-Out Validation Split
+---
 
-| Model Variant | Relational Accuracy (%) | Trainable Params (%) | General Language Retention |
-| :--- | :--- | :--- | :--- |
-| **SmolVLM-256M (Baseline)** | 66.7% | 0.0% | Normal |
-| **SmolVLM-256M + Spatial-LoRA** | **75.0%** | **0.29%** | **Preserved ("White")** |
+## Architecture Overview
 
+```mermaid
+flowchart TD
+    Dataset[Synthetic / Real Dataset Ingestion] --> DegradationEngine[Photometric Degradation Engine]
+    
+    subgraph Degradation Tiers
+        DegradationEngine -->|Severity 0| Clean[Original Image]
+        DegradationEngine -->|Severity 1-3| Perturbed[Low-Light / Blur / Contrast Noise]
+    end
 
-**Intervention Delta:** **+8.3% absolute accuracy gain** on balanced spatial discrimination without language degradation.
+    Clean --> Evaluator[VLMSpatialEvaluator]
+    Perturbed --> Evaluator
+
+    subgraph Dual Evaluation Engine
+        Evaluator --> CLIPScore[CLIP Cross-Modal Representation Matching]
+        Evaluator --> Directional[DirectionalEvaluator: IoU & Topological Predicates]
+    end
+
+    Directional --> Predicates[left_of / right_of / above / below / inside / disjoint]
+    CLIPScore --> Aggregator[SpatialMetricsAggregator]
+    Predicates --> Aggregator
+
+    subgraph Export Engine
+        Aggregator --> MD[GitHub-Flavored Markdown Report]
+        Aggregator --> LaTeX[Academic LaTeX booktabs Table]
+        Aggregator --> JSONDump[Structured Benchmark JSON]
+    end

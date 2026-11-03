@@ -5,10 +5,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from PIL import Image, ImageDraw
 
-from .directional_evaluator import BoundingBox, SpatialRelation
+from .directional_evaluator import SpatialRelation
 from .evaluator import VLMSpatialEvaluator
 from .metrics_aggregator import SpatialMetricsAggregator
 from .perturbations import PhotometricDegradationEngine
+from .visualizer import plot_robustness_curves, render_spatial_failure_overlay
 
 
 def generate_synthetic_benchmark_dataset(samples_per_relation: int = 2) -> List[Dict[str, Any]]:
@@ -76,8 +77,9 @@ def run_benchmark_pipeline(
     output_dir: str = "reports",
     severities: Optional[List[int]] = None,
     save_reports: bool = True,
+    save_plots: bool = False,
 ) -> Dict[str, Any]:
-    """Runs zero-shot spatial evaluation across degradation tiers and exports Markdown, LaTeX, and JSON reports."""
+    """Runs zero-shot spatial evaluation across degradation tiers and exports Markdown, LaTeX, JSON, and plot figures."""
     if severities is None:
         severities = [0, 1, 2, 3]
 
@@ -88,10 +90,13 @@ def run_benchmark_pipeline(
         evaluator = VLMSpatialEvaluator()
 
     aggregator = SpatialMetricsAggregator()
+    severity_accuracies: List[float] = []
+    failure_cases: List[Dict[str, Any]] = []
 
     for severity in severities:
         is_perturbed = severity > 0
         pert_type = f"photometric_severity_{severity}" if is_perturbed else None
+        sev_correct = 0
 
         for sample in dataset:
             degraded_img = PhotometricDegradationEngine.apply_pipeline(
@@ -102,9 +107,20 @@ def run_benchmark_pipeline(
                 degraded_img, sample["positive_prompt"], sample["negative_prompt"]
             )
 
-            predicted_label = (
-                sample["target_relation"] if result["is_correct"] else "incorrect"
-            )
+            is_correct = result["is_correct"]
+            predicted_label = sample["target_relation"] if is_correct else "incorrect"
+
+            if is_correct:
+                sev_correct += 1
+            elif save_plots:
+                failure_cases.append({
+                    "image": degraded_img,
+                    "subject_box": sample["subject_box"],
+                    "reference_box": sample["reference_box"],
+                    "target_relation": sample["target_relation"],
+                    "predicted_relation": "incorrect",
+                    "filename": f"fail_{sample['id']}_sev_{severity}.png",
+                })
 
             aggregator.add_evaluation(
                 sample_id=f"{sample['id']}_sev_{severity}",
@@ -115,11 +131,15 @@ def run_benchmark_pipeline(
                 perturbation_type=pert_type,
             )
 
-    reports_generated: Dict[str, str] = {}
-    if save_reports:
-        out_path = Path(output_dir)
-        out_path.mkdir(parents=True, exist_ok=True)
+        acc = (sev_correct / len(dataset) * 100.0) if dataset else 0.0
+        severity_accuracies.append(acc)
 
+    reports_generated: Dict[str, str] = {}
+    plots_generated: Dict[str, Any] = {}
+    out_path = Path(output_dir)
+
+    if save_reports:
+        out_path.mkdir(parents=True, exist_ok=True)
         md_file = out_path / "benchmark_summary.md"
         latex_file = out_path / "benchmark_report.tex"
         json_file = out_path / "benchmark_summary.json"
@@ -136,12 +156,50 @@ def run_benchmark_pipeline(
             "json": str(json_file),
         }
 
+    if save_plots:
+        figures_dir = out_path / "figures"
+        figures_dir.mkdir(parents=True, exist_ok=True)
+
+        curve_file = figures_dir / "robustness_curves.png"
+        curve_payload = {
+            "VLMSpatialEvaluator": {
+                "accuracies": severity_accuracies,
+                "color": "#2563eb",
+                "marker": "o",
+                "linestyle": "-",
+            }
+        }
+        plot_robustness_curves(
+            results=curve_payload,
+            severities=severities,
+            output_path=str(curve_file),
+            title="Spatial Reasoning Degradation Across Photometric Severities",
+        )
+        plots_generated["curve"] = str(curve_file)
+
+        failures_dir = figures_dir / "failures"
+        failures_dir.mkdir(parents=True, exist_ok=True)
+        rendered_failures: List[str] = []
+        for fail in failure_cases[:10]:
+            fail_path = failures_dir / fail["filename"]
+            render_spatial_failure_overlay(
+                image=fail["image"],
+                subject_box=fail["subject_box"],
+                reference_box=fail["reference_box"],
+                target_relation=fail["target_relation"],
+                predicted_relation=fail["predicted_relation"],
+                output_path=str(fail_path),
+            )
+            rendered_failures.append(str(fail_path))
+        plots_generated["failures"] = rendered_failures
+
     return {
         "aggregator": aggregator,
         "clean_accuracy": aggregator.get_clean_accuracy(),
         "perturbed_accuracy": aggregator.get_perturbed_accuracy(),
         "robustness_drop": aggregator.compute_robustness_drop(),
         "reports": reports_generated,
+        "plots": plots_generated,
     }
 
 
@@ -152,6 +210,11 @@ def main() -> None:
     parser.add_argument("--samples-per-rel", type=int, default=2, help="Number of synthetic samples per relation")
     parser.add_argument("--device", type=str, default=None, help="Device to run CLIP model ('cpu' or 'cuda')")
     parser.add_argument("--model-name", type=str, default="openai/clip-vit-base-patch32", help="Pretrained model identifier")
+    parser.add_argument(
+        "--save-plots",
+        action="store_true",
+        help="Export robustness degradation curves and failure diagnostic overlays into reports/figures/",
+    )
     args = parser.parse_args()
 
     print(f"Initializing VLMSpatialEvaluator ({args.model_name})...")
@@ -168,10 +231,13 @@ def main() -> None:
         output_dir=args.output_dir,
         severities=args.severities,
         save_reports=True,
+        save_plots=args.save_plots,
     )
 
     print("\n" + results["aggregator"].generate_markdown_report())
     print(f"\nBenchmark reports successfully saved to: {args.output_dir}/")
+    if args.save_plots:
+        print(f"Diagnostic plots saved to: {args.output_dir}/figures/")
 
 
 if __name__ == "__main__":

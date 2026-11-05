@@ -7,6 +7,7 @@ from PIL import Image, ImageDraw
 
 from .directional_evaluator import SpatialRelation
 from .evaluator import VLMSpatialEvaluator
+from .autoregressive_evaluator import AutoregressiveSpatialEvaluator
 from .metrics_aggregator import SpatialMetricsAggregator
 from .perturbations import PhotometricDegradationEngine
 from .visualizer import plot_robustness_curves, render_spatial_failure_overlay
@@ -66,18 +67,23 @@ def generate_synthetic_benchmark_dataset(samples_per_relation: int = 2) -> List[
                 "subject_box": subj_box,
                 "reference_box": ref_box,
                 "target_relation": rel.value,
+                "labels": {
+                    "obj_a": ("blue", "square"),
+                    "obj_b": ("red", "square" if rel != SpatialRelation.INSIDE else "frame")
+                }
             })
 
     return dataset
 
 
 def run_benchmark_pipeline(
-    evaluator: Optional[VLMSpatialEvaluator] = None,
+    evaluator: Any = None,
     dataset: Optional[List[Dict[str, Any]]] = None,
     output_dir: str = "reports",
     severities: Optional[List[int]] = None,
     save_reports: bool = True,
     save_plots: bool = False,
+    is_autoregressive: bool = False,
 ) -> Dict[str, Any]:
     """Runs zero-shot spatial evaluation across degradation tiers and exports Markdown, LaTeX, JSON, and plot figures."""
     if severities is None:
@@ -103,11 +109,20 @@ def run_benchmark_pipeline(
                 sample["image"], severity=severity
             )
 
-            result = evaluator.score_pair(
-                degraded_img, sample["positive_prompt"], sample["negative_prompt"]
-            )
+            if is_autoregressive:
+                labels = sample.get("labels", {"obj_a": ("blue", "square"), "obj_b": ("red", "square")})
+                is_correct = evaluator.evaluate_sample(
+                    degraded_img,
+                    sample["target_relation"],
+                    labels["obj_a"],
+                    labels["obj_b"]
+                )
+            else:
+                result = evaluator.score_pair(
+                    degraded_img, sample["positive_prompt"], sample["negative_prompt"]
+                )
+                is_correct = result["is_correct"]
 
-            is_correct = result["is_correct"]
             predicted_label = sample["target_relation"] if is_correct else "incorrect"
 
             if is_correct:
@@ -162,11 +177,11 @@ def run_benchmark_pipeline(
 
         curve_file = figures_dir / "robustness_curves.png"
         curve_payload = {
-            "VLMSpatialEvaluator": {
+            "Model Evaluator": {
                 "accuracies": severity_accuracies,
-                "color": "#2563eb",
-                "marker": "o",
-                "linestyle": "-",
+                "color": "#16a34a" if is_autoregressive else "#2563eb",
+                "marker": "^" if is_autoregressive else "o",
+                "linestyle": "--" if is_autoregressive else "-",
             }
         }
         plot_robustness_curves(
@@ -208,8 +223,15 @@ def main() -> None:
     parser.add_argument("--output-dir", type=str, default="reports", help="Directory for exported reports")
     parser.add_argument("--severities", nargs="+", type=int, default=[0, 1, 2, 3], help="Photometric degradation levels")
     parser.add_argument("--samples-per-rel", type=int, default=2, help="Number of synthetic samples per relation")
-    parser.add_argument("--device", type=str, default=None, help="Device to run CLIP model ('cpu' or 'cuda')")
-    parser.add_argument("--model-name", type=str, default="openai/clip-vit-base-patch32", help="Pretrained model identifier")
+    parser.add_argument("--device", type=str, default=None, help="Compute target device ('cpu' or 'cuda')")
+    parser.add_argument(
+        "--evaluator-type",
+        type=str,
+        choices=["clip", "siglip", "autoregressive"],
+        default="clip",
+        help="Evaluator architecture type",
+    )
+    parser.add_argument("--model-name", type=str, default=None, help="Pretrained model identifier override")
     parser.add_argument(
         "--save-plots",
         action="store_true",
@@ -217,8 +239,16 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    print(f"Initializing VLMSpatialEvaluator ({args.model_name})...")
-    evaluator = VLMSpatialEvaluator(model_name=args.model_name, device=args.device)
+    is_ar = args.evaluator_type == "autoregressive"
+
+    if is_ar:
+        model_id = args.model_name or "HuggingFaceTB/SmolVLM-256M-Instruct"
+        print(f"Initializing AutoregressiveSpatialEvaluator ({model_id})...")
+        evaluator = AutoregressiveSpatialEvaluator(model_name=model_id, device=args.device)
+    else:
+        model_id = args.model_name or ("openai/clip-vit-base-patch32" if args.evaluator_type == "clip" else "google/siglip-base-patch16-224")
+        print(f"Initializing VLMSpatialEvaluator ({model_id})...")
+        evaluator = VLMSpatialEvaluator(model_name=model_id, device=args.device)
 
     print("Generating synthetic spatial benchmark dataset...")
     dataset = generate_synthetic_benchmark_dataset(samples_per_relation=args.samples_per_rel)
@@ -232,6 +262,7 @@ def main() -> None:
         severities=args.severities,
         save_reports=True,
         save_plots=args.save_plots,
+        is_autoregressive=is_ar,
     )
 
     print("\n" + results["aggregator"].generate_markdown_report())

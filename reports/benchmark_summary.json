@@ -1,0 +1,45 @@
+{
+  "summary": {
+    "total_samples": 30,
+    "clean_accuracy": 0.4,
+    "perturbed_accuracy": 0.45,
+    "relative_drop": 0.0
+  },
+  "per_relation": {
+    "above": {
+      "clean_samples": 2,
+      "clean_accuracy": 0.0,
+      "perturbed_samples": 4,
+      "perturbed_accuracy": 0.0,
+      "relative_drop": 0.0
+    },
+    "below": {
+      "clean_samples": 2,
+      "clean_accuracy": 1.0,
+      "perturbed_samples": 4,
+      "perturbed_accuracy": 1.0,
+      "relative_drop": 0.0
+    },
+    "inside": {
+      "clean_samples": 2,
+      "clean_accuracy": 0.0,
+      "perturbed_samples": 4,
+      "perturbed_accuracy": 0.0,
+      "relative_drop": 0.0
+    },
+    "left_of": {
+      "clean_samples": 2,
+      "clean_accuracy": 0.0,
+      "perturbed_samples": 4,
+      "perturbed_accuracy": 0.25,
+      "relative_drop": 0.0
+    },
+    "right_of": {
+      "clean_samples": 2,
+      "clean_accuracy": 1.0,
+      "perturbed_samples": 4,
+      "perturbed_accuracy": 1.0,
+      "relative_drop": 0.0
+    }
+  }
+}

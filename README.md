@@ -2,10 +2,10 @@
 
 [![CI Pipeline](https://github.com/irtazirfan08-source/vlm-spatial-eval/actions/workflows/ci.yml/badge.svg)](https://github.com/irtazirfan08-source/vlm-spatial-eval/actions/workflows/ci.yml)
 ![Python Version](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)
-![PyTest](https://img.shields.io/badge/tests-34%20passed-brightgreen)
+![PyTest](https://img.shields.io/badge/tests-39%20passed-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-A modular diagnostic benchmarking suite designed to probe, quantify, and stress-test spatial reasoning, relative directional comprehension, and topological predicates in Vision-Language Models (VLMs) across progressive photometric degradation tiers.
+A modular diagnostic benchmarking suite designed to probe, quantify, and stress-test spatial reasoning, relative directional comprehension, counterfactual symmetry, and topological predicates in Vision-Language Models (VLMs) across progressive photometric degradation tiers.
 
 ---
 
@@ -27,12 +27,15 @@ flowchart TD
         EvaluatorRouter -->|--evaluator-type clip / siglip| Contrastive[VLMSpatialEvaluator: Cross-Modal Matching]
         EvaluatorRouter -->|--evaluator-type autoregressive| Autoregressive[AutoregressiveSpatialEvaluator: Token LogProbs]
         EvaluatorRouter -->|Directional| Logic[DirectionalEvaluator: BBox IoU & Topology]
+        EvaluatorRouter -->|Counterfactual & Depth| Counterfactual[CounterfactualSymmetryAuditor & OcclusionRenderer]
     end
 
     Logic --> Predicates[left_of / right_of / above / below / inside / disjoint]
+    Counterfactual --> DepthPreds[Mirror Symmetry / in_front_of / behind]
     Contrastive --> Aggregator[SpatialMetricsAggregator]
     Autoregressive --> Aggregator
     Predicates --> Aggregator
+    DepthPreds --> Aggregator
 
     subgraph Intervention Pipeline
         Autoregressive --> LoRA[adapters/smolvlm-spatial-lora]

@@ -1,0 +1,8 @@
+{
+  "total_mirror_pairs": 4,
+  "original_accuracy": 0.5,
+  "counterfactual_accuracy": 0.5,
+  "symmetry_consistency": 0.0,
+  "directional_bias": 1.0,
+  "occlusion_accuracy": 0.5
+}

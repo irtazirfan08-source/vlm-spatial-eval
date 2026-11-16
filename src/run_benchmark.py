@@ -1,8 +1,9 @@
 """Automated end-to-end spatial reasoning benchmark runner and report generator."""
 
 import argparse
+import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from PIL import Image, ImageDraw
 
 from .directional_evaluator import SpatialRelation
@@ -11,6 +12,12 @@ from .autoregressive_evaluator import AutoregressiveSpatialEvaluator
 from .metrics_aggregator import SpatialMetricsAggregator
 from .perturbations import PhotometricDegradationEngine
 from .visualizer import plot_robustness_curves, render_spatial_failure_overlay
+from .counterfactual_evaluator import (
+    CounterfactualFlipPair,
+    CounterfactualSymmetryAuditor,
+    OcclusionSceneRenderer,
+    generate_counterfactual_flip_pair,
+)
 
 
 def generate_synthetic_benchmark_dataset(samples_per_relation: int = 2) -> List[Dict[str, Any]]:
@@ -69,8 +76,8 @@ def generate_synthetic_benchmark_dataset(samples_per_relation: int = 2) -> List[
                 "target_relation": rel.value,
                 "labels": {
                     "obj_a": ("blue", "square"),
-                    "obj_b": ("red", "square" if rel != SpatialRelation.INSIDE else "frame")
-                }
+                    "obj_b": ("red", "square" if rel != SpatialRelation.INSIDE else "frame"),
+                },
             })
 
     return dataset
@@ -115,7 +122,7 @@ def run_benchmark_pipeline(
                     degraded_img,
                     sample["target_relation"],
                     labels["obj_a"],
-                    labels["obj_b"]
+                    labels["obj_b"],
                 )
             else:
                 result = evaluator.score_pair(
@@ -218,6 +225,135 @@ def run_benchmark_pipeline(
     }
 
 
+def _build_counterfactual_scorer(
+    evaluator: Any,
+) -> Callable[[Image.Image, str, str], bool]:
+    """Adapt contrastive, autoregressive, or mock evaluators into a binary pair scorer."""
+
+    def _score(image: Image.Image, pos_prompt: str, neg_prompt: str) -> bool:
+        # 1. Contrastive dual-encoder path (VLMSpatialEvaluator.score_pair)
+        if hasattr(evaluator, "score_pair"):
+            result = evaluator.score_pair(image, pos_prompt, neg_prompt)
+            if isinstance(result, dict):
+                if "is_correct" in result:
+                    return bool(result["is_correct"])
+                if "margin" in result:
+                    return float(result["margin"]) > 0.0
+                if "pos_score" in result and "neg_score" in result:
+                    return float(result["pos_score"]) > float(result["neg_score"])
+                if "correct" in result:
+                    return bool(result["correct"])
+            if isinstance(result, (tuple, list)) and len(result) >= 2:
+                return float(result[0]) > float(result[1])
+            if isinstance(result, (int, float)):
+                return float(result) > 0.0
+            return bool(result)
+
+        # 2. Autoregressive log-prob Yes/No helper path
+        if hasattr(evaluator, "score_yes_no"):
+            question = f"Is the following statement true? {pos_prompt}"
+            res = evaluator.score_yes_no(image, question)
+            if isinstance(res, dict):
+                return float(res.get("margin", 0.0)) > 0.0
+            return float(res) > 0.0
+
+        # 3. AutoregressiveSpatialEvaluator.evaluate_sample path
+        if hasattr(evaluator, "evaluate_sample"):
+            rel_map = {
+                "left of": "left_of",
+                "right of": "right_of",
+                "in front of": "in_front_of",
+                "behind": "behind",
+            }
+            target_rel = next(
+                (code for phrase, code in rel_map.items() if phrase in pos_prompt.lower()),
+                "left_of",
+            )
+            try:
+                return bool(
+                    evaluator.evaluate_sample(
+                        image, target_rel, ("red", "box"), ("blue", "box")
+                    )
+                )
+            except (KeyError, ValueError):
+                return False
+
+        # 4. Generic prompt scorer fallback
+        if hasattr(evaluator, "score_prompt"):
+            return float(evaluator.score_prompt(image, pos_prompt)) > float(
+                evaluator.score_prompt(image, neg_prompt)
+            )
+
+        raise AttributeError(
+            f"Evaluator {type(evaluator).__name__} does not expose a supported scoring method."
+        )
+
+    return _score
+
+
+def run_counterfactual_audit(
+    evaluator: Any,
+    samples_per_rel: int = 2,
+    report_dir: str = "reports",
+) -> Dict[str, Any]:
+    """Execute horizontal mirror-symmetry and z-order occlusion diagnostics."""
+    pairs: List[CounterfactualFlipPair] = []
+    for idx in range(max(1, samples_per_rel) * 2):
+        img = Image.new("RGB", (224, 224), (255, 255, 255))
+        draw = ImageDraw.Draw(img)
+        if idx % 2 == 0:
+            subj_box, obj_box, rel = (28, 90, 68, 130), (152, 90, 192, 130), "left_of"
+        else:
+            subj_box, obj_box, rel = (152, 90, 192, 130), (28, 90, 68, 130), "right_of"
+        draw.rectangle(subj_box, fill=(220, 50, 47))
+        draw.rectangle(obj_box, fill=(38, 139, 210))
+        pairs.append(generate_counterfactual_flip_pair(img, subj_box, obj_box, rel))
+
+    scorer_fn = _build_counterfactual_scorer(evaluator)
+    symmetry_report = CounterfactualSymmetryAuditor(scorer_fn).evaluate_pairs(pairs)
+
+    renderer = OcclusionSceneRenderer(image_size=224)
+    occlusion_samples = [
+        renderer.render_pair(subject_in_front=True),
+        renderer.render_pair(subject_in_front=False),
+    ]
+    occ_correct = 0
+    for sample in occlusion_samples:
+        pos_rel = sample.relation.replace("_", " ")
+        neg_rel = "behind" if sample.relation == "in_front_of" else "in front of"
+        pos_prompt = f"The {sample.subject_label} is {pos_rel} the {sample.object_label}."
+        neg_prompt = f"The {sample.subject_label} is {neg_rel} the {sample.object_label}."
+        if scorer_fn(sample.image, pos_prompt, neg_prompt):
+            occ_correct += 1
+
+    occlusion_accuracy = occ_correct / len(occlusion_samples)
+
+    summary: Dict[str, Any] = {
+        "total_mirror_pairs": symmetry_report.total_pairs,
+        "original_accuracy": round(symmetry_report.original_accuracy, 4),
+        "counterfactual_accuracy": round(symmetry_report.counterfactual_accuracy, 4),
+        "symmetry_consistency": round(symmetry_report.symmetry_consistency, 4),
+        "directional_bias": round(symmetry_report.directional_bias, 4),
+        "occlusion_accuracy": round(occlusion_accuracy, 4),
+    }
+
+    print("\n### Counterfactual Mirror-Symmetry & Depth-Occlusion Audit\n")
+    print("| Metric | Value |")
+    print("|:---|:---|")
+    print(f"| Original Horizontal Accuracy | {summary['original_accuracy'] * 100:.1f}% |")
+    print(f"| Counterfactual Flipped Accuracy | {summary['counterfactual_accuracy'] * 100:.1f}% |")
+    print(f"| Mirror Symmetry Consistency | {summary['symmetry_consistency'] * 100:.1f}% |")
+    print(f"| Left/Right Directional Bias | {summary['directional_bias']:.2f} |")
+    print(f"| Depth Occlusion Accuracy (`in_front_of`/`behind`) | {summary['occlusion_accuracy'] * 100:.1f}% |")
+
+    out_path = Path(report_dir) / "counterfactual_audit.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    print(f"\nCounterfactual audit report saved to: {out_path}")
+
+    return summary
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="VLM Spatial Reasoning Benchmark Suite")
     parser.add_argument("--output-dir", type=str, default="reports", help="Directory for exported reports")
@@ -236,6 +372,11 @@ def main() -> None:
         "--save-plots",
         action="store_true",
         help="Export robustness degradation curves and failure diagnostic overlays into reports/figures/",
+    )
+    parser.add_argument(
+        "--run-counterfactual",
+        action="store_true",
+        help="Run horizontal mirror-symmetry and depth-occlusion diagnostic audits",
     )
     args = parser.parse_args()
 
@@ -269,6 +410,13 @@ def main() -> None:
     print(f"\nBenchmark reports successfully saved to: {args.output_dir}/")
     if args.save_plots:
         print(f"Diagnostic plots saved to: {args.output_dir}/figures/")
+
+    if args.run_counterfactual:
+        run_counterfactual_audit(
+            evaluator=evaluator,
+            samples_per_rel=args.samples_per_rel,
+            report_dir=args.output_dir,
+        )
 
 
 if __name__ == "__main__":

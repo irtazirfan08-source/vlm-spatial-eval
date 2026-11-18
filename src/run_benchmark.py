@@ -18,6 +18,7 @@ from .counterfactual_evaluator import (
     OcclusionSceneRenderer,
     generate_counterfactual_flip_pair,
 )
+from .calibration import CalibrationTracker, margin_to_confidence
 
 
 def generate_synthetic_benchmark_dataset(samples_per_relation: int = 2) -> List[Dict[str, Any]]:
@@ -83,6 +84,21 @@ def generate_synthetic_benchmark_dataset(samples_per_relation: int = 2) -> List[
     return dataset
 
 
+def _extract_prediction_confidence(raw_result: Any) -> float:
+    """Resolve top-1 prediction confidence in [0.0, 1.0] from evaluator output or fallback."""
+    if isinstance(raw_result, dict):
+        if "confidence" in raw_result and raw_result["confidence"] is not None:
+            return max(0.0, min(1.0, float(raw_result["confidence"])))
+        if "margin" in raw_result and raw_result["margin"] is not None:
+            return margin_to_confidence(float(raw_result["margin"]))
+        if "pos_score" in raw_result and "neg_score" in raw_result:
+            diff = float(raw_result["pos_score"]) - float(raw_result["neg_score"])
+            return margin_to_confidence(diff)
+    if isinstance(raw_result, (int, float)) and not isinstance(raw_result, bool):
+        return margin_to_confidence(float(raw_result))
+    return 0.75
+
+
 def run_benchmark_pipeline(
     evaluator: Any = None,
     dataset: Optional[List[Dict[str, Any]]] = None,
@@ -92,7 +108,7 @@ def run_benchmark_pipeline(
     save_plots: bool = False,
     is_autoregressive: bool = False,
 ) -> Dict[str, Any]:
-    """Runs zero-shot spatial evaluation across degradation tiers and exports Markdown, LaTeX, JSON, and plot figures."""
+    """Runs zero-shot spatial evaluation across degradation tiers and exports Markdown, LaTeX, JSON, calibration, and plot figures."""
     if severities is None:
         severities = [0, 1, 2, 3]
 
@@ -103,6 +119,7 @@ def run_benchmark_pipeline(
         evaluator = VLMSpatialEvaluator()
 
     aggregator = SpatialMetricsAggregator()
+    calibration_tracker = CalibrationTracker(n_bins=10)
     severity_accuracies: List[float] = []
     failure_cases: List[Dict[str, Any]] = []
 
@@ -118,17 +135,20 @@ def run_benchmark_pipeline(
 
             if is_autoregressive:
                 labels = sample.get("labels", {"obj_a": ("blue", "square"), "obj_b": ("red", "square")})
-                is_correct = evaluator.evaluate_sample(
+                raw_out = evaluator.evaluate_sample(
                     degraded_img,
                     sample["target_relation"],
                     labels["obj_a"],
                     labels["obj_b"],
                 )
+                is_correct = bool(raw_out["is_correct"]) if isinstance(raw_out, dict) else bool(raw_out)
+                confidence = _extract_prediction_confidence(raw_out)
             else:
                 result = evaluator.score_pair(
                     degraded_img, sample["positive_prompt"], sample["negative_prompt"]
                 )
-                is_correct = result["is_correct"]
+                is_correct = bool(result["is_correct"])
+                confidence = _extract_prediction_confidence(result)
 
             predicted_label = sample["target_relation"] if is_correct else "incorrect"
 
@@ -152,6 +172,11 @@ def run_benchmark_pipeline(
                 is_perturbed=is_perturbed,
                 perturbation_type=pert_type,
             )
+            calibration_tracker.add_prediction(
+                severity=severity,
+                is_correct=is_correct,
+                confidence=confidence,
+            )
 
         acc = (sev_correct / len(dataset) * 100.0) if dataset else 0.0
         severity_accuracies.append(acc)
@@ -165,17 +190,20 @@ def run_benchmark_pipeline(
         md_file = out_path / "benchmark_summary.md"
         latex_file = out_path / "benchmark_report.tex"
         json_file = out_path / "benchmark_summary.json"
+        cal_file = out_path / "calibration_summary.json"
 
         with open(md_file, "w", encoding="utf-8") as f:
             f.write(aggregator.to_markdown_table())
 
         aggregator.export_latex(str(latex_file))
         aggregator.export_json(str(json_file))
+        calibration_tracker.export_json(str(cal_file))
 
         reports_generated = {
             "markdown": str(md_file),
             "latex": str(latex_file),
             "json": str(json_file),
+            "calibration": str(cal_file),
         }
 
     if save_plots:
@@ -217,6 +245,7 @@ def run_benchmark_pipeline(
 
     return {
         "aggregator": aggregator,
+        "calibration_tracker": calibration_tracker,
         "clean_accuracy": aggregator.get_clean_accuracy(),
         "perturbed_accuracy": aggregator.get_perturbed_accuracy(),
         "robustness_drop": aggregator.compute_robustness_drop(),
@@ -407,6 +436,8 @@ def main() -> None:
     )
 
     print("\n" + results["aggregator"].generate_markdown_report())
+    print("\n### Confidence Calibration Across Degradation Tiers\n")
+    print(results["calibration_tracker"].to_markdown_table())
     print(f"\nBenchmark reports successfully saved to: {args.output_dir}/")
     if args.save_plots:
         print(f"Diagnostic plots saved to: {args.output_dir}/figures/")
